@@ -34,7 +34,7 @@ const POINT_GOAL: i32 = 10_000;
 const NUMBER_OF_DICE: usize = 6;
 
 trait Player {
-    fn make_move(&self, state: &GameState, turn: &Turn, roll: &[u8], rng: &mut MyRng) -> Move {
+    fn make_move(&self, state: &Game, turn: &Turn, roll: &[u8], rng: &mut MyRng) -> Move {
         let card = state.card();
         match card {
             Bonus(num) => self.bonus_strat(num, state, turn, roll, rng),
@@ -47,28 +47,21 @@ trait Player {
         }
     }
 
-    fn tutto_strat(&self, state: &GameState, turn: &Turn, roll: &[u8], rng: &mut MyRng) -> Move;
+    fn tutto_strat(&self, state: &Game, turn: &Turn, roll: &[u8], rng: &mut MyRng) -> Move;
     fn bonus_strat(
         &self,
         num: i32,
-        state: &GameState,
+        state: &Game,
         turn: &Turn,
         roll: &[u8],
         rng: &mut MyRng,
     ) -> Move;
-    fn double_strat(&self, state: &GameState, turn: &Turn, roll: &[u8], rng: &mut MyRng) -> Move;
-    fn fire_work_strat(&self, state: &GameState, turn: &Turn, roll: &[u8], rng: &mut MyRng)
-        -> Move;
-    fn street_strat(&self, state: &GameState, turn: &Turn, roll: &[u8], rng: &mut MyRng) -> Move;
-    fn plus_minus_strat(
-        &self,
-        state: &GameState,
-        turn: &Turn,
-        roll: &[u8],
-        rng: &mut MyRng,
-    ) -> Move;
+    fn double_strat(&self, state: &Game, turn: &Turn, roll: &[u8], rng: &mut MyRng) -> Move;
+    fn fire_work_strat(&self, state: &Game, turn: &Turn, roll: &[u8], rng: &mut MyRng) -> Move;
+    fn street_strat(&self, state: &Game, turn: &Turn, roll: &[u8], rng: &mut MyRng) -> Move;
+    fn plus_minus_strat(&self, state: &Game, turn: &Turn, roll: &[u8], rng: &mut MyRng) -> Move;
 
-    fn card_strat(&self, state: &GameState, last_turn: &Turn, rng: &mut MyRng) -> bool;
+    fn card_strat(&self, state: &Game, last_turn: &Turn, rng: &mut MyRng) -> bool;
 }
 
 pub struct Move {
@@ -313,10 +306,11 @@ impl Turn {
 
 struct Game {
     players: Vec<Box<dyn Player>>,
-    game_state: GameState,
-    rng: MyRng,
+    rng: Option<MyRng>,
     turn: usize,
     log: Vec<PlayerLog>,
+    deck: Deck,
+    scores: Vec<i32>,
 }
 
 impl Game {
@@ -329,21 +323,42 @@ impl Game {
         let deck = Deck::shuffle_from_vec(cards, &mut rng);
         Self {
             log: (0..players.len()).map(|_| PlayerLog::new()).collect(),
-            game_state: GameState::new(players.len(), deck),
+            scores: vec![0; players.len()],
             players,
-            rng,
+            rng: Some(rng),
             turn: 0,
+            deck,
         }
+    }
+
+    pub fn highest_score(&self) -> (i32, Vec<usize>) {
+        let mut players = Vec::new();
+        let mut highest_score = 0;
+        for (p, score) in self.scores.iter().enumerate() {
+            if highest_score < *score {
+                highest_score = *score;
+                players = vec![p]
+            }
+            if highest_score == *score {
+                players.push(p)
+            }
+        }
+        (highest_score, players)
+    }
+
+    pub fn card(&self) -> Card {
+        self.deck.open_card()
     }
 
     pub fn next_turn(&mut self) {
         let player_index = self.turn % self.players.len();
-        let active_player = self.players.get_mut(player_index).unwrap();
-        let mut turn = Turn::new(self.game_state.draw_new(&mut self.rng));
+        let active_player = &self.players[player_index];
+        let mut rng = self.rng.take().unwrap();
+        let mut turn = Turn::new(self.deck.draw_new(&mut rng));
         let mut turn_log = Vec::new();
         let mut achieved_minus = 0;
         'card: loop {
-            if self.game_state.card() == Stop {
+            if self.deck.open_card() == Stop {
                 turn.set_failed();
                 turn_log.push(CardLog {
                     card: Stop,
@@ -351,8 +366,7 @@ impl Game {
                 });
                 break 'card;
             }
-            if self.game_state.card() == PlusMinus
-                && self.game_state.highest_score().1.contains(&player_index)
+            if self.deck.open_card() == PlusMinus && self.highest_score().1.contains(&player_index)
             {
                 turn.set_failed();
                 turn_log.push(CardLog {
@@ -362,35 +376,34 @@ impl Game {
                 break 'card;
             }
             'dice: loop {
-                let roll = turn.get_new_dice(&mut self.rng);
+                let roll = turn.get_new_dice(&mut rng);
                 if !turn.contains_valid_dice(&roll) {
                     turn.set_failed();
                     turn_log.push(CardLog {
-                        card: self.game_state.card(),
+                        card: self.deck.open_card(),
                         points_with_card: 0,
                     });
                     break 'card;
                 }
-                let this_move =
-                    active_player.make_move(&self.game_state, &turn, &roll, &mut self.rng);
+                let this_move = active_player.make_move(&self, &turn, &roll, &mut rng);
                 turn.take_dice(&roll, this_move.takes).unwrap();
                 if this_move.write {
                     turn_log.push(CardLog {
-                        card: self.game_state.card(),
+                        card: self.deck.open_card(),
                         points_with_card: turn.this_card_point(),
                     });
                     break 'card;
                 }
                 if turn.is_tutto() {
-                    if self.game_state.card() == PlusMinus {
+                    if self.deck.open_card() == PlusMinus {
                         achieved_minus += 1;
                     }
                     turn_log.push(CardLog {
-                        card: self.game_state.card(),
+                        card: self.deck.open_card(),
                         points_with_card: turn.this_card_point(),
                     });
-                    if active_player.card_strat(&self.game_state, &turn, &mut self.rng) {
-                        turn.new_card(self.game_state.draw_new(&mut self.rng));
+                    if active_player.card_strat(&self, &turn, &mut rng) {
+                        turn.new_card(self.deck.draw_new(&mut rng));
                         break 'dice;
                     } else {
                         turn.finish_card();
@@ -401,20 +414,21 @@ impl Game {
         }
 
         for _ in 0..achieved_minus {
-            for this_player_idx in self.game_state.highest_score().1 {
+            for this_player_idx in self.highest_score().1 {
                 self.log[this_player_idx].push(TurnLog::Minus1000);
-                self.game_state.scores[this_player_idx] -= 1000;
+                self.scores[this_player_idx] -= 1000;
             }
         }
+        self.rng = Some(rng);
         self.log[player_index].push(TurnLog::from_vec(turn_log, turn.all_points()));
-        self.game_state.scores[player_index] += turn.all_points();
+        self.scores[player_index] += turn.all_points();
         self.turn += 1;
     }
 
     pub fn play_game(&mut self) {
         'outer: loop {
             self.next_turn();
-            for (player_idx, score) in self.game_state.scores.iter().enumerate() {
+            for (player_idx, score) in self.scores.iter().enumerate() {
                 print!("player{player_idx}: {score}   ");
                 if *score >= POINT_GOAL {
                     println!();
@@ -434,43 +448,6 @@ impl Game {
             )
             .unwrap()
         }
-    }
-}
-
-struct GameState {
-    deck: Deck,
-    scores: Vec<i32>,
-}
-
-impl GameState {
-    pub fn new(players: usize, deck: Deck) -> Self {
-        let scores = vec![0; players];
-        Self { deck, scores }
-    }
-
-    pub fn draw_new(&mut self, rng: &mut MyRng) -> Card {
-        self.deck.draw_new(rng)
-    }
-
-    pub fn highest_score(&self) -> (i32, Vec<usize>) {
-        let mut players = Vec::new();
-        let mut highest_score = 0;
-        for (p, score) in self.scores.iter().enumerate() {
-            if highest_score < *score {
-                highest_score = *score;
-                players = vec![p]
-            }
-            if highest_score == *score {
-                players.push(p)
-            }
-        }
-        (highest_score, players)
-    }
-}
-
-impl GameState {
-    pub fn card(&self) -> Card {
-        self.deck.open_card()
     }
 }
 

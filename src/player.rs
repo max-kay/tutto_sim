@@ -1,4 +1,5 @@
-use crate::{GameState, Move, MyRng, Player, Take, Turn};
+#![allow(unused_variables)]
+use crate::{Game, Move, MyRng, Player, Take, Turn};
 pub struct NaivePlayer;
 
 fn catergorize_roll(roll: &[u8]) -> Vec<Take> {
@@ -54,14 +55,14 @@ fn search_triplet(num: u8, list: &[u8]) -> Vec<usize> {
 }
 
 impl Player for NaivePlayer {
-    fn tutto_strat(&self, state: &GameState, turn: &Turn, roll: &[u8], rng: &mut MyRng) -> Move {
+    fn tutto_strat(&self, state: &Game, turn: &Turn, roll: &[u8], rng: &mut MyRng) -> Move {
         todo!()
     }
 
     fn bonus_strat(
         &self,
         num: i32,
-        state: &GameState,
+        state: &Game,
         turn: &Turn,
         roll: &[u8],
         rng: &mut MyRng,
@@ -69,38 +70,26 @@ impl Player for NaivePlayer {
         todo!()
     }
 
-    fn double_strat(&self, state: &GameState, turn: &Turn, roll: &[u8], rng: &mut MyRng) -> Move {
+    fn double_strat(&self, state: &Game, turn: &Turn, roll: &[u8], rng: &mut MyRng) -> Move {
         todo!()
     }
 
-    fn fire_work_strat(
-        &self,
-        state: &GameState,
-        turn: &Turn,
-        roll: &[u8],
-        rng: &mut MyRng,
-    ) -> Move {
+    fn fire_work_strat(&self, state: &Game, turn: &Turn, roll: &[u8], rng: &mut MyRng) -> Move {
         Move {
             takes: catergorize_roll(roll),
             write: false,
         }
     }
 
-    fn street_strat(&self, state: &GameState, turn: &Turn, roll: &[u8], rng: &mut MyRng) -> Move {
+    fn street_strat(&self, state: &Game, turn: &Turn, roll: &[u8], rng: &mut MyRng) -> Move {
         todo!()
     }
 
-    fn plus_minus_strat(
-        &self,
-        state: &GameState,
-        turn: &Turn,
-        roll: &[u8],
-        rng: &mut MyRng,
-    ) -> Move {
+    fn plus_minus_strat(&self, state: &Game, turn: &Turn, roll: &[u8], rng: &mut MyRng) -> Move {
         todo!()
     }
 
-    fn card_strat(&self, state: &GameState, last_turn: &Turn, rng: &mut MyRng) -> bool {
+    fn card_strat(&self, state: &Game, last_turn: &Turn, rng: &mut MyRng) -> bool {
         todo!()
     }
 }
