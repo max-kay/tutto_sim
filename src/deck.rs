@@ -10,7 +10,7 @@ pub enum Card {
     Bonus(i32),
     Double,
     FireWork,
-    Street,
+    Flush,
     Clover,
     Stop,
     PlusMinus,
@@ -22,27 +22,23 @@ pub struct Deck {
     seen: Vec<Card>,
 }
 
-impl Deck {
-    pub fn new_official(rng: &mut MyRng) -> Self {
-        let mut deck = Vec::with_capacity(56);
-        deck.extend([Bonus(200); 5].into_iter());
-        deck.extend([Bonus(300); 5].into_iter());
-        deck.extend([Bonus(400); 5].into_iter());
-        deck.extend([Bonus(500); 5].into_iter());
-        deck.extend([Bonus(600); 5].into_iter());
-        deck.extend([Double; 5].into_iter());
-        deck.extend([FireWork; 5].into_iter());
-        deck.extend([Street; 5].into_iter());
-        deck.extend([Clover; 1].into_iter());
-        deck.extend([Stop; 10].into_iter());
-        deck.extend([PlusMinus; 5].into_iter());
-        deck.shuffle(rng);
-        Self {
-            new: deck,
-            seen: Vec::new(),
-        }
-    }
+pub fn get_official_cards() -> Vec<Card> {
+    let mut deck = Vec::with_capacity(56);
+    deck.extend([Bonus(200); 5].into_iter());
+    deck.extend([Bonus(300); 5].into_iter());
+    deck.extend([Bonus(400); 5].into_iter());
+    deck.extend([Bonus(500); 5].into_iter());
+    deck.extend([Bonus(600); 5].into_iter());
+    deck.extend([Double; 5].into_iter());
+    deck.extend([FireWork; 5].into_iter());
+    // deck.extend([Flush; 5].into_iter());
+    deck.extend([Clover; 1].into_iter());
+    deck.extend([Stop; 10].into_iter());
+    deck.extend([PlusMinus; 5].into_iter());
+    deck
+}
 
+impl Deck {
     pub fn shuffle_from_vec(mut cards: Vec<Card>, rng: &mut MyRng) -> Self {
         cards.shuffle(rng);
         Self {
