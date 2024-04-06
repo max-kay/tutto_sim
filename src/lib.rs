@@ -78,7 +78,7 @@ pub struct Turn {
     card: Card,
     taken_dice: Vec<CountedDice>,
     previous_cards_total: i32,
-    fire_work_points: Option<i32>,
+    fire_work_points: i32,
     clover_win_next_tutto: bool,
     achieved_minus: u32,
     logs: Vec<CardLog>,
@@ -88,17 +88,17 @@ pub struct Turn {
 
 impl Turn {
     /// creates a new Turn
-    pub fn new(card: Card) -> Self {
+    pub fn new() -> Self {
         Self {
-            card,
+            card: Default::default(),
             taken_dice: Vec::new(),
             previous_cards_total: 0,
-            fire_work_points: if card == FireWork { Some(0) } else { None },
+            fire_work_points: 0,
             clover_win_next_tutto: false,
             achieved_minus: 0,
             logs: Vec::new(),
             roll: Vec::new(),
-            card_is_finished: false,
+            card_is_finished: true,
         }
     }
 }
@@ -110,7 +110,7 @@ impl Turn {
         assert!(self.card_is_finished);
         self.card = card;
         if card == FireWork {
-            self.fire_work_points = Some(0);
+            self.fire_work_points = 0;
         }
         self.card_is_finished = false;
     }
@@ -128,60 +128,6 @@ impl Turn {
             .collect();
     }
 
-    /// categorizes the roll into takes
-    /// assumes card != Flush
-    pub fn catergorize_roll(&self) -> Vec<Take> {
-        debug_assert_ne!(self.card, Flush);
-        if self.roll.len() < 3 {
-            let mut takes = Vec::new();
-            for (i, dice) in self.roll.iter().enumerate() {
-                if *dice == 5 {
-                    takes.push(Take::Single(i))
-                }
-            }
-            for (i, dice) in self.roll.iter().enumerate() {
-                if *dice == 1 {
-                    takes.push(Take::Single(i))
-                }
-            }
-            takes
-        } else {
-            let mut taken_idxs = Vec::new();
-            let mut takes = Vec::new();
-            for i in 2..=6 {
-                let mut triplets = self.search_triplet(i);
-                for chunk in triplets.chunks(3) {
-                    takes.push(Take::Triple(chunk[0], chunk[1], chunk[2]))
-                }
-                taken_idxs.append(&mut triplets);
-            }
-            for (i, dice) in self.roll.iter().enumerate() {
-                if *dice == 5 && !taken_idxs.contains(&i) {
-                    takes.push(Take::Single(i))
-                }
-            }
-            for (i, dice) in self.roll.iter().enumerate() {
-                if *dice == 1 && !taken_idxs.contains(&i) {
-                    takes.push(Take::Single(i))
-                }
-            }
-            takes
-        }
-    }
-
-    fn search_triplet(&self, num: u8) -> Vec<usize> {
-        let mut incomplete = Vec::new();
-        let mut out = Vec::new();
-        for (i, val) in self.roll.iter().enumerate() {
-            if *val == num {
-                incomplete.push(i);
-                if incomplete.len() == 3 {
-                    out.append(&mut incomplete);
-                }
-            }
-        }
-        out
-    }
     /// takes the dice returns an error if the take was illegal
     pub fn take_dice(&mut self, takes: Vec<Take>) -> Result<(), RuleError> {
         debug_assert!(!self.card_is_finished);
@@ -234,7 +180,7 @@ impl Turn {
         if self.is_tutto() {
             match self.card {
                 FireWork => {
-                    *self.fire_work_points.as_mut().unwrap() +=
+                    self.fire_work_points +=
                         self.taken_dice.iter().map(|x| x.points()).sum::<i32>();
                     self.taken_dice = Vec::new();
                 }
@@ -288,6 +234,86 @@ impl Turn {
             == NUMBER_OF_DICE
     }
 
+    /// categorizes the roll into takes
+    /// assumes card != Flush
+    pub fn catergorize_roll(&self) -> Vec<Take> {
+        debug_assert_ne!(self.card, Flush);
+        if self.roll.len() < 3 {
+            let mut takes = Vec::new();
+            for (i, dice) in self.roll.iter().enumerate() {
+                if *dice == 5 {
+                    takes.push(Take::Single(i))
+                }
+            }
+            for (i, dice) in self.roll.iter().enumerate() {
+                if *dice == 1 {
+                    takes.push(Take::Single(i))
+                }
+            }
+            takes
+        } else {
+            let mut taken_idxs = Vec::new();
+            let mut takes = Vec::new();
+            for i in 2..=6 {
+                let mut triplets = self.search_triplet(i);
+                for chunk in triplets.chunks(3) {
+                    takes.push(Take::Triple(chunk[0], chunk[1], chunk[2]))
+                }
+                taken_idxs.append(&mut triplets);
+            }
+            for (i, dice) in self.roll.iter().enumerate() {
+                if *dice == 5 && !taken_idxs.contains(&i) {
+                    takes.push(Take::Single(i))
+                }
+            }
+            for (i, dice) in self.roll.iter().enumerate() {
+                if *dice == 1 && !taken_idxs.contains(&i) {
+                    takes.push(Take::Single(i))
+                }
+            }
+            takes
+        }
+    }
+
+    /// searches for triplets of num
+    fn search_triplet(&self, num: u8) -> Vec<usize> {
+        let mut incomplete = Vec::new();
+        let mut out = Vec::new();
+        for (i, val) in self.roll.iter().enumerate() {
+            if *val == num {
+                incomplete.push(i);
+                if incomplete.len() == 3 {
+                    out.append(&mut incomplete);
+                }
+            }
+        }
+        out
+    }
+
+    pub fn possible_takes_flush(&self) -> Vec<Take> {
+        let numbers_present: Vec<_> = self
+            .taken_dice
+            .iter()
+            .map(|x| {
+                if let CountedDice::SingleFlush(n) = x {
+                    *n
+                } else {
+                    unreachable!()
+                }
+            })
+            .collect();
+
+        let mut this_take_numbers = Vec::new();
+        let mut this_take = Vec::new();
+        for (i, dice) in self.roll.iter().enumerate() {
+            if !numbers_present.contains(dice) && this_take_numbers.contains(dice) {
+                this_take.push(Take::Single(i));
+                this_take_numbers.push(*dice);
+            }
+        }
+        this_take
+    }
+
     /// returns true if the roll allows for valid takes
     pub fn contains_valid_dice(&self) -> bool {
         debug_assert!(!self.card_is_finished);
@@ -309,7 +335,7 @@ impl Turn {
         }
         let mut res = self.taken_dice.iter().map(|x| x.points()).sum();
         if self.card == FireWork {
-            res += self.fire_work_points.unwrap_or(0);
+            res += self.fire_work_points;
         }
         return res;
     }
@@ -324,7 +350,7 @@ impl Turn {
     }
 }
 
-/// mutable impls
+/// functions about finishing cards and turns
 impl Turn {
     /// finish the card by counting the points not considering the tutto
     pub fn write_points(&mut self) {
@@ -339,7 +365,7 @@ impl Turn {
         match self.card {
             Bonus(n) => new_points += n,
             Double => new_points *= 2,
-            FireWork => new_points += self.fire_work_points.unwrap(),
+            FireWork => new_points += self.fire_work_points,
             Flush => (),
             Clover => new_points = POINT_GOAL,
             Stop => unreachable!(),
@@ -347,7 +373,7 @@ impl Turn {
         }
         self.taken_dice = Vec::new();
         self.previous_cards_total += new_points;
-        self.fire_work_points = None;
+        self.fire_work_points = 0;
         self.card_is_finished = true;
     }
 
@@ -419,20 +445,23 @@ impl Game {
         self.deck.open_card()
     }
 
-    pub fn get_active_index(&self) -> usize {
+    /// gets the index of the player currently playing
+    pub fn get_player_idx(&self) -> usize {
         self.turn % self.players.len()
     }
 
-    pub fn get_active_player(&self) -> &dyn Player {
-        self.players[self.get_active_index()].as_ref()
+    /// gets the current player
+    fn get_current_player(&self) -> &dyn Player {
+        self.players[self.get_player_idx()].as_ref()
     }
 
     /// plays the turn
-    /// note that the type Turn handles counting points and that the logic
-    /// for new card happens in the function play_card
     pub fn next_turn(&mut self) {
-        let mut turn = Turn::new(self.deck.draw_new(self.rng.as_mut().unwrap()));
+        // note that the type Turn handles counting points and that the logic
+        // for new card happens in the function play_card
+        let mut turn = Turn::new();
         loop {
+            turn.new_card(self.deck.draw_new(self.rng.as_mut().unwrap()));
             if self.deck.open_card() == Stop {
                 turn.set_failed();
                 turn.push_card_log(CardLog {
@@ -442,7 +471,7 @@ impl Game {
                 break;
             }
             if self.deck.open_card() == PlusMinus
-                && self.highest_score().1.contains(&self.get_active_index())
+                && self.highest_score().1.contains(&self.get_player_idx())
             {
                 turn.set_failed();
                 turn.push_card_log(CardLog {
@@ -463,7 +492,7 @@ impl Game {
             }
         }
 
-        let idx = self.get_active_index();
+        let idx = self.get_player_idx();
         let (points, log) = turn.finish_turn();
         self.log[idx].push(log);
         self.scores[idx] += points;
@@ -471,8 +500,7 @@ impl Game {
     }
 
     /// returns true if the turn needs to end
-    /// this function should also guarantee that if it returns true the card is
-    /// in a state which allow the function all_points to return the total points
+    /// additionally guarantees that the turn is card-finished
     fn play_card(&mut self, turn: &mut Turn) -> bool {
         loop {
             turn.roll_dice(self.rng.as_mut().unwrap());
@@ -485,7 +513,7 @@ impl Game {
                 return true;
             }
             let mut rng = self.rng.take().unwrap();
-            let this_move = self.get_active_player().make_move(&self, &*turn, &mut rng);
+            let this_move = self.get_current_player().make_move(&self, &*turn, &mut rng);
             self.rng = Some(rng);
             turn.take_dice(this_move.takes).unwrap();
             if this_move.write {
@@ -502,19 +530,20 @@ impl Game {
                     card: self.deck.open_card(),
                     points_with_card: turn.this_card_point(),
                 });
-                let mut rng = self.rng.take().unwrap();
-                let new_card = self.get_active_player().card_strat(&self, &*turn, &mut rng);
-                self.rng = Some(rng);
-                if new_card {
-                    turn.new_card(self.deck.draw_new(self.rng.as_mut().unwrap()));
-                    return false;
-                } else {
+                if [Clover, PlusMinus].contains(&self.card()) {
                     return true;
                 }
+                let mut rng = self.rng.take().unwrap();
+                let new_card = self
+                    .get_current_player()
+                    .card_strat(&self, &*turn, &mut rng);
+                self.rng = Some(rng);
+                return !new_card;
             }
         }
     }
 
+    /// plays the game until a player reaches the POINT_GOAL
     pub fn play_game(&mut self) {
         'outer: loop {
             self.next_turn();

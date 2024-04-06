@@ -5,13 +5,14 @@ use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 use Card::*;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum Card {
     Bonus(i32),
     Double,
     FireWork,
     Flush,
     Clover,
+    #[default]
     Stop,
     PlusMinus,
 }
