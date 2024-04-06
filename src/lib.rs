@@ -3,7 +3,6 @@ use std::usize;
 use rand::{Rng, SeedableRng};
 use rand_pcg::Pcg64Mcg as MyRng;
 use rand_seeder::Seeder;
-use thiserror::Error;
 
 pub mod deck;
 pub mod logging;
@@ -15,22 +14,8 @@ pub use players::NaivePlayer;
 use players::Player;
 use Card::*;
 
-#[derive(Error, Debug, Copy, Clone)]
-pub enum RuleError {
-    #[error("card is flush")]
-    CardIsFlush,
-    #[error("card is not flush")]
-    CardNotFlush,
-    #[error("illegal take occured")]
-    IllegalTake,
-    #[error("dice was taken twice")]
-    DuplicateDice,
-    #[error("triple was invalid")]
-    IllegalTriple,
-}
-
-const POINT_GOAL: i32 = 10_000;
-const NUMBER_OF_DICE: usize = 6;
+pub const POINT_GOAL: i32 = 10_000;
+pub const NUMBER_OF_DICE: usize = 6;
 
 pub struct Move {
     takes: Vec<Take>,
@@ -38,37 +23,63 @@ pub struct Move {
 }
 
 pub enum Take {
-    Single(usize),
-    Triple(usize, usize, usize),
+    Single(usize, u8),
+    Triple(usize, usize, usize, u8),
+}
+
+impl Take {
+    pub fn into_taken_dice(self) -> TakenDice {
+        match self {
+            Self::Single(_, 1) => TakenDice::Single1,
+            Self::Single(_, 5) => TakenDice::Single5,
+            Self::Triple(_, _, _, val) => TakenDice::Triple(val),
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn into_flush_dice(self) -> TakenDice {
+        if let Self::Single(_, val) = self {
+            TakenDice::SingleFlush(val)
+        } else {
+            unreachable!()
+        }
+    }
+
+    pub fn idxs(&self) -> Vec<usize> {
+        match self {
+            Take::Single(i, _) => vec![*i],
+            Take::Triple(i1, i2, i3, _) => vec![*i1, *i2, *i3],
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum CountedDice {
+pub enum TakenDice {
     Single5,
     Single1,
     Triple(u8),
     SingleFlush(u8),
 }
 
-impl CountedDice {
+impl TakenDice {
     pub fn points(&self) -> i32 {
         match self {
-            CountedDice::Single5 => 50,
-            CountedDice::Single1 => 100,
-            CountedDice::Triple(n) => {
+            TakenDice::Single5 => 50,
+            TakenDice::Single1 => 100,
+            TakenDice::Triple(n) => {
                 if *n != 1 {
                     *n as i32 * 100
                 } else {
                     1_000
                 }
             }
-            CountedDice::SingleFlush(_) => unreachable!(),
+            TakenDice::SingleFlush(_) => unreachable!(),
         }
     }
 
     pub fn number_of_dice(&self) -> usize {
         match self {
-            CountedDice::Triple(_) => 3,
+            TakenDice::Triple(_) => 3,
             _ => 1,
         }
     }
@@ -76,7 +87,7 @@ impl CountedDice {
 
 pub struct Turn {
     card: Card,
-    taken_dice: Vec<CountedDice>,
+    taken_dice: Vec<TakenDice>,
     previous_cards_total: i32,
     fire_work_points: i32,
     clover_win_next_tutto: bool,
@@ -128,54 +139,20 @@ impl Turn {
             .collect();
     }
 
-    /// takes the dice returns an error if the take was illegal
-    pub fn take_dice(&mut self, takes: Vec<Take>) -> Result<(), RuleError> {
+    /// takes the dice
+    /// assumes the take is valid
+    /// should be guaranteed by the methods categorize roll and categorize flush
+    pub fn take_dice(&mut self, takes: Vec<Take>) {
         debug_assert!(!self.card_is_finished);
-        if takes.is_empty() {
-            return Err(RuleError::IllegalTake);
-        }
+        debug_assert!(!takes.is_empty());
         if self.card == Flush {
-            return self.take_flush_dice(takes);
-        }
-        let mut taken_idxs = Vec::new();
-        for take in takes {
-            match take {
-                Take::Single(idx) => {
-                    if taken_idxs.contains(&idx) {
-                        return Err(RuleError::DuplicateDice);
-                    }
-                    if self.roll[idx] == 5 {
-                        self.taken_dice.push(CountedDice::Single5);
-                        taken_idxs.push(idx);
-                    } else if self.roll[idx] == 1 {
-                        self.taken_dice.push(CountedDice::Single1);
-                        taken_idxs.push(idx);
-                    } else {
-                        return Err(RuleError::IllegalTake);
-                    }
-                }
-                Take::Triple(a, b, c) => {
-                    if taken_idxs.contains(&a)
-                        || taken_idxs.contains(&b)
-                        || taken_idxs.contains(&c)
-                        || a == b
-                        || b == c
-                        || c == a
-                    {
-                        return Err(RuleError::DuplicateDice);
-                    }
-                    if self.roll[a] != self.roll[b]
-                        || self.roll[b] != self.roll[c]
-                        || self.roll[c] != self.roll[a]
-                    {
-                        return Err(RuleError::IllegalTriple);
-                    }
-                    self.taken_dice.push(CountedDice::Triple(self.roll[a]));
-                    taken_idxs.push(a);
-                    taken_idxs.push(b);
-                    taken_idxs.push(c);
-                }
+            for take in takes {
+                self.taken_dice.push(take.into_flush_dice());
             }
+            return;
+        }
+        for take in takes {
+            self.taken_dice.push(take.into_taken_dice())
         }
         if self.is_tutto() {
             match self.card {
@@ -196,30 +173,6 @@ impl Turn {
                 _ => (),
             }
         }
-        Ok(())
-    }
-
-    /// handles spacial case flush
-    fn take_flush_dice(&mut self, takes: Vec<Take>) -> Result<(), RuleError> {
-        let mut taken_idxs = Vec::new();
-        for take in takes {
-            if let Take::Single(idx) = take {
-                if (!self
-                    .taken_dice
-                    .contains(&CountedDice::SingleFlush(self.roll[idx])))
-                    && !taken_idxs.contains(&idx)
-                {
-                    self.taken_dice
-                        .push(CountedDice::SingleFlush(self.roll[idx]))
-                } else {
-                    return Err(RuleError::IllegalTake);
-                }
-                taken_idxs.push(idx)
-            } else {
-                return Err(RuleError::CardIsFlush);
-            }
-        }
-        return Ok(());
     }
 }
 
@@ -236,39 +189,40 @@ impl Turn {
 
     /// categorizes the roll into takes
     /// assumes card != Flush
+    /// this is the only way to see the dice for a player
     pub fn catergorize_roll(&self) -> Vec<Take> {
         debug_assert_ne!(self.card, Flush);
         if self.roll.len() < 3 {
             let mut takes = Vec::new();
             for (i, dice) in self.roll.iter().enumerate() {
                 if *dice == 5 {
-                    takes.push(Take::Single(i))
+                    takes.push(Take::Single(i, 5))
                 }
             }
             for (i, dice) in self.roll.iter().enumerate() {
                 if *dice == 1 {
-                    takes.push(Take::Single(i))
+                    takes.push(Take::Single(i, 1))
                 }
             }
             takes
         } else {
             let mut taken_idxs = Vec::new();
             let mut takes = Vec::new();
-            for i in 2..=6 {
+            for i in (2..=6).chain([1].into_iter()) {
                 let mut triplets = self.search_triplet(i);
                 for chunk in triplets.chunks(3) {
-                    takes.push(Take::Triple(chunk[0], chunk[1], chunk[2]))
+                    takes.push(Take::Triple(chunk[0], chunk[1], chunk[2], i))
                 }
                 taken_idxs.append(&mut triplets);
             }
             for (i, dice) in self.roll.iter().enumerate() {
                 if *dice == 5 && !taken_idxs.contains(&i) {
-                    takes.push(Take::Single(i))
+                    takes.push(Take::Single(i, 5))
                 }
             }
             for (i, dice) in self.roll.iter().enumerate() {
                 if *dice == 1 && !taken_idxs.contains(&i) {
-                    takes.push(Take::Single(i))
+                    takes.push(Take::Single(i, 1))
                 }
             }
             takes
@@ -290,12 +244,14 @@ impl Turn {
         out
     }
 
-    pub fn possible_takes_flush(&self) -> Vec<Take> {
+    /// categorizes the dice according to flush rules
+    pub fn categorize_flush(&self) -> Vec<Take> {
+        debug_assert_eq!(self.card, Flush);
         let numbers_present: Vec<_> = self
             .taken_dice
             .iter()
             .map(|x| {
-                if let CountedDice::SingleFlush(n) = x {
+                if let TakenDice::SingleFlush(n) = x {
                     *n
                 } else {
                     unreachable!()
@@ -306,8 +262,8 @@ impl Turn {
         let mut this_take_numbers = Vec::new();
         let mut this_take = Vec::new();
         for (i, dice) in self.roll.iter().enumerate() {
-            if !numbers_present.contains(dice) && this_take_numbers.contains(dice) {
-                this_take.push(Take::Single(i));
+            if !numbers_present.contains(dice) && !this_take_numbers.contains(dice) {
+                this_take.push(Take::Single(i, *dice));
                 this_take_numbers.push(*dice);
             }
         }
@@ -319,7 +275,7 @@ impl Turn {
         debug_assert!(!self.card_is_finished);
         if self.card == Flush {
             for dice in &self.roll {
-                if !self.taken_dice.contains(&CountedDice::SingleFlush(*dice)) {
+                if !self.taken_dice.contains(&TakenDice::SingleFlush(*dice)) {
                     return true;
                 }
             }
@@ -329,7 +285,7 @@ impl Turn {
     }
 
     /// returns the points made during this card
-    pub fn this_card_point(&self) -> i32 {
+    pub fn this_card_points(&self) -> i32 {
         if self.card == Flush {
             return 0;
         }
@@ -341,27 +297,21 @@ impl Turn {
     }
 }
 
-/// logging stuff
-impl Turn {
-    /// push a log
-    pub fn push_card_log(&mut self, log: CardLog) {
-        assert!(self.card_is_finished);
-        self.logs.push(log)
-    }
-}
-
 /// functions about finishing cards and turns
 impl Turn {
     /// finish the card by counting the points not considering the tutto
     pub fn write_points(&mut self) {
-        self.previous_cards_total += self.this_card_point();
+        self.logs.push(CardLog {
+            card: self.card,
+            points: self.this_card_points(),
+        });
+        self.previous_cards_total += self.this_card_points();
         self.card_is_finished = true;
     }
 
     /// sums the points and applies the tutto action.
     fn finish_card(&mut self) {
-        assert!(self.is_tutto());
-        let mut new_points = self.this_card_point();
+        let mut new_points = self.this_card_points();
         match self.card {
             Bonus(n) => new_points += n,
             Double => new_points *= 2,
@@ -371,6 +321,10 @@ impl Turn {
             Stop => unreachable!(),
             PlusMinus => new_points = 1000,
         }
+        self.logs.push(CardLog {
+            card: self.card,
+            points: new_points,
+        });
         self.taken_dice = Vec::new();
         self.previous_cards_total += new_points;
         self.fire_work_points = 0;
@@ -383,6 +337,10 @@ impl Turn {
             self.write_points();
             return;
         }
+        self.logs.push(CardLog {
+            card: self.card,
+            points: 0,
+        });
         self.previous_cards_total = 0;
         self.taken_dice = Vec::new();
         self.card_is_finished = true;
@@ -393,7 +351,7 @@ impl Turn {
         debug_assert!(self.card_is_finished);
         let points = {
             let this = &self;
-            this.previous_cards_total + this.this_card_point()
+            this.previous_cards_total + this.this_card_points()
         };
         (points, TurnLog::from_vec(self.logs, points))
     }
@@ -464,20 +422,12 @@ impl Game {
             turn.new_card(self.deck.draw_new(self.rng.as_mut().unwrap()));
             if self.deck.open_card() == Stop {
                 turn.set_failed();
-                turn.push_card_log(CardLog {
-                    card: Stop,
-                    points_with_card: 0,
-                });
                 break;
             }
             if self.deck.open_card() == PlusMinus
                 && self.highest_score().1.contains(&self.get_player_idx())
             {
                 turn.set_failed();
-                turn.push_card_log(CardLog {
-                    card: PlusMinus,
-                    points_with_card: 0,
-                });
                 break;
             }
             if self.play_card(&mut turn) {
@@ -506,30 +456,18 @@ impl Game {
             turn.roll_dice(self.rng.as_mut().unwrap());
             if !turn.contains_valid_dice() {
                 turn.set_failed();
-                turn.push_card_log(CardLog {
-                    card: self.deck.open_card(),
-                    points_with_card: 0,
-                });
                 return true;
             }
             let mut rng = self.rng.take().unwrap();
             let this_move = self.get_current_player().make_move(&self, &*turn, &mut rng);
             self.rng = Some(rng);
-            turn.take_dice(this_move.takes).unwrap();
+            turn.take_dice(this_move.takes);
             if this_move.write {
                 turn.write_points();
-                turn.push_card_log(CardLog {
-                    card: self.deck.open_card(),
-                    points_with_card: turn.this_card_point(),
-                });
                 return true;
             }
             if turn.is_tutto() {
                 turn.finish_card();
-                turn.push_card_log(CardLog {
-                    card: self.deck.open_card(),
-                    points_with_card: turn.this_card_point(),
-                });
                 if [Clover, PlusMinus].contains(&self.card()) {
                     return true;
                 }

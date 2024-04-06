@@ -30,5 +30,5 @@ impl TurnLog {
 #[derive(Serialize, Deserialize)]
 pub struct CardLog {
     pub card: Card,
-    pub points_with_card: i32,
+    pub points: i32,
 }

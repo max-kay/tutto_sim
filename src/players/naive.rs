@@ -33,7 +33,7 @@ impl Player for NaivePlayer {
 
     fn flush_strat(&self, state: &Game, turn: &Turn, rng: &mut MyRng) -> Move {
         Move {
-            takes: turn.possible_takes_flush(),
+            takes: turn.categorize_flush(),
             write: false,
         }
     }
