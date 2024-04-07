@@ -1,8 +1,20 @@
 use crate::{Card::*, Game, Move, MyRng, Turn};
-pub use naive::NaivePlayer;
+
 mod naive;
+pub use naive::NaivePlayer;
+
+mod cli_player;
+pub use cli_player::CliPlayer;
 
 pub trait Player {
+    fn make_move(&self, state: &Game, turn: &Turn, rng: &mut MyRng) -> Move;
+    fn card_strat(&self, state: &Game, last_turn: &Turn, rng: &mut MyRng) -> bool;
+}
+
+impl<T> Player for T
+where
+    T: SplitPlayer,
+{
     fn make_move(&self, state: &Game, turn: &Turn, rng: &mut MyRng) -> Move {
         let card = state.card();
         match card {
@@ -16,6 +28,12 @@ pub trait Player {
         }
     }
 
+    fn card_strat(&self, state: &Game, last_turn: &Turn, rng: &mut MyRng) -> bool {
+        <Self as SplitPlayer>::card_strat(&self, state, last_turn, rng)
+    }
+}
+
+pub trait SplitPlayer {
     fn tutto_strat(&self, state: &Game, turn: &Turn, rng: &mut MyRng) -> Move;
     fn bonus_strat(&self, num: i32, state: &Game, turn: &Turn, rng: &mut MyRng) -> Move;
     fn double_strat(&self, state: &Game, turn: &Turn, rng: &mut MyRng) -> Move;

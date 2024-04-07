@@ -1,4 +1,4 @@
-use std::mem::swap;
+use std::{fmt::Display, mem::swap};
 
 use crate::MyRng;
 use rand::seq::SliceRandom;
@@ -15,6 +15,12 @@ pub enum Card {
     #[default]
     Stop,
     PlusMinus,
+}
+
+impl Display for Card {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
 }
 
 #[derive(Debug)]

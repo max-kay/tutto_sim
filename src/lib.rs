@@ -1,4 +1,4 @@
-use std::usize;
+use std::{fmt::Display, usize};
 
 use rand::{Rng, SeedableRng};
 use rand_pcg::Pcg64Mcg as MyRng;
@@ -22,6 +22,7 @@ pub struct Move {
     write: bool,
 }
 
+#[derive(Copy, Clone)]
 pub enum Take {
     Single(usize, u8),
     Triple(usize, usize, usize, u8),
@@ -49,6 +50,15 @@ impl Take {
         match self {
             Take::Single(i, _) => vec![*i],
             Take::Triple(i1, i2, i3, _) => vec![*i1, *i2, *i3],
+        }
+    }
+}
+
+impl Display for Take {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Take::Single(_, val) => write!(f, "{val}"),
+            Take::Triple(_, _, _, val) => write!(f, "|{val} {val} {val}|"),
         }
     }
 }
@@ -81,6 +91,17 @@ impl TakenDice {
         match self {
             TakenDice::Triple(_) => 3,
             _ => 1,
+        }
+    }
+}
+
+impl Display for TakenDice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TakenDice::Single5 => write!(f, "5"),
+            TakenDice::Single1 => write!(f, "1"),
+            TakenDice::Triple(val) => write!(f, "{val} {val} {val}"),
+            TakenDice::SingleFlush(val) => write!(f, "{val}"),
         }
     }
 }
@@ -129,12 +150,7 @@ impl Turn {
     /// generates a new roll
     pub fn roll_dice(&mut self, rng: &mut MyRng) {
         assert!(!self.card_is_finished);
-        self.roll = (0..(NUMBER_OF_DICE
-            - self
-                .taken_dice
-                .iter()
-                .map(|x| x.number_of_dice())
-                .sum::<usize>()))
+        self.roll = (0..self.number_of_dice_left())
             .map(|_| rng.gen_range(1..=6))
             .collect();
     }
@@ -190,7 +206,7 @@ impl Turn {
     /// categorizes the roll into takes
     /// assumes card != Flush
     /// this is the only way to see the dice for a player
-    pub fn catergorize_roll(&self) -> Vec<Take> {
+    pub fn catergorize_normal(&self) -> Vec<Take> {
         debug_assert_ne!(self.card, Flush);
         if self.roll.len() < 3 {
             let mut takes = Vec::new();
@@ -270,6 +286,14 @@ impl Turn {
         this_take
     }
 
+    pub fn categorize_roll(&self) -> Vec<Take> {
+        if self.card == Flush {
+            self.categorize_flush()
+        } else {
+            self.catergorize_normal()
+        }
+    }
+
     /// returns true if the roll allows for valid takes
     pub fn contains_valid_dice(&self) -> bool {
         debug_assert!(!self.card_is_finished);
@@ -281,7 +305,17 @@ impl Turn {
             }
             return false;
         }
-        !self.catergorize_roll().is_empty()
+        !self.catergorize_normal().is_empty()
+    }
+
+    /// returns how many dice are not taken
+    pub fn number_of_dice_left(&self) -> usize {
+        NUMBER_OF_DICE
+            - self
+                .taken_dice
+                .iter()
+                .map(|x| x.number_of_dice())
+                .sum::<usize>()
     }
 
     /// returns the points made during this card
@@ -295,12 +329,41 @@ impl Turn {
         }
         return res;
     }
+
+    pub fn takes_string(&self) -> String {
+        let mut out = String::new();
+        for take in self.categorize_roll() {
+            out.push_str(&format!("{take}, "));
+        }
+        out
+    }
+
+    pub fn taken_dice_string(&self) -> String {
+        let mut out = String::new();
+        for dice in self.taken_dice.iter() {
+            out.push_str(&format!("{dice}  "));
+        }
+        out
+    }
+
+    pub fn cli_output(&self) -> String {
+        let card = format!("card: {}", self.card);
+        let taken = if !self.taken_dice.is_empty() {
+            format!("taken dice: {}", self.taken_dice_string())
+        } else {
+            "empty".to_string()
+        };
+        let roll = format!("current roll: {:?}", self.roll);
+        let takes = format!("takes: {}", self.takes_string());
+        format!("{card}\n\n{taken}\n{roll}\n{takes}")
+    }
 }
 
 /// functions about finishing cards and turns
 impl Turn {
     /// finish the card by counting the points not considering the tutto
     pub fn write_points(&mut self) {
+        debug_assert!(!self.card_is_finished);
         self.logs.push(CardLog {
             card: self.card,
             points: self.this_card_points(),
@@ -311,6 +374,7 @@ impl Turn {
 
     /// sums the points and applies the tutto action.
     fn finish_card(&mut self) {
+        debug_assert!(!self.card_is_finished);
         let mut new_points = self.this_card_points();
         match self.card {
             Bonus(n) => new_points += n,
@@ -333,6 +397,7 @@ impl Turn {
 
     /// resets previous points to 0 and finishes card
     pub fn set_failed(&mut self) {
+        debug_assert!(!self.card_is_finished);
         if self.card == FireWork {
             self.write_points();
             return;
@@ -349,11 +414,10 @@ impl Turn {
     /// returns the points gotten in the turn and a turn log
     pub fn finish_turn(self) -> (i32, TurnLog) {
         debug_assert!(self.card_is_finished);
-        let points = {
-            let this = &self;
-            this.previous_cards_total + this.this_card_points()
-        };
-        (points, TurnLog::from_vec(self.logs, points))
+        (
+            self.previous_cards_total,
+            TurnLog::from_vec(self.logs, self.previous_cards_total),
+        )
     }
 }
 
@@ -366,6 +430,7 @@ pub struct Game {
     scores: Vec<i32>,
 }
 
+/// contructors
 impl Game {
     pub fn new(players: Vec<Box<dyn Player>>, cards: Vec<Card>, seed: Option<&str>) -> Self {
         let mut rng: MyRng = if let Some(seed) = seed {
@@ -383,7 +448,10 @@ impl Game {
             deck,
         }
     }
+}
 
+/// game state
+impl Game {
     pub fn highest_score(&self) -> (i32, Vec<usize>) {
         let mut players = Vec::new();
         let mut highest_score = 0;
@@ -413,6 +481,20 @@ impl Game {
         self.players[self.get_player_idx()].as_ref()
     }
 
+    /// string for cli output
+    pub fn get_cli_header(&self) -> String {
+        let mut names = String::new();
+        let mut scores = String::new();
+        for (i, score) in self.scores.iter().enumerate() {
+            names.push_str(&format!("Player {}    ", i));
+            scores.push_str(&format!("{score:<12}"));
+        }
+        format!("{names}\n{scores}")
+    }
+}
+
+/// progressing the game state
+impl Game {
     /// plays the turn
     pub fn next_turn(&mut self) {
         // note that the type Turn handles counting points and that the logic
@@ -420,6 +502,7 @@ impl Game {
         let mut turn = Turn::new();
         loop {
             turn.new_card(self.deck.draw_new(self.rng.as_mut().unwrap()));
+            println!("card: {:?}", self.card());
             if self.deck.open_card() == Stop {
                 turn.set_failed();
                 break;
@@ -436,9 +519,9 @@ impl Game {
         }
 
         for _ in 0..turn.achieved_minus {
-            for this_player_idx in self.highest_score().1 {
-                self.log[this_player_idx].push(TurnLog::Minus1000);
-                self.scores[this_player_idx] -= 1000;
+            for idx in self.highest_score().1 {
+                self.log[idx].push(TurnLog::Minus1000);
+                self.scores[idx] -= 1000;
             }
         }
 
@@ -462,7 +545,7 @@ impl Game {
             let this_move = self.get_current_player().make_move(&self, &*turn, &mut rng);
             self.rng = Some(rng);
             turn.take_dice(this_move.takes);
-            if this_move.write {
+            if this_move.write && !(turn.card == Clover) {
                 turn.write_points();
                 return true;
             }
@@ -472,6 +555,7 @@ impl Game {
                     return true;
                 }
                 let mut rng = self.rng.take().unwrap();
+
                 let new_card = self
                     .get_current_player()
                     .card_strat(&self, &*turn, &mut rng);
@@ -483,18 +567,12 @@ impl Game {
 
     /// plays the game until a player reaches the POINT_GOAL
     pub fn play_game(&mut self) {
-        'outer: loop {
+        for _ in 0..3 * 4 {
+            println!("------------------------------------------------");
+            println!("Player {} is playing", self.get_player_idx());
             self.next_turn();
-            for (player_idx, score) in self.scores.iter().enumerate() {
-                print!("player{player_idx}: {score}   ");
-                if *score >= POINT_GOAL {
-                    println!();
-                    println!("player{player_idx} is winner");
-                    break 'outer;
-                }
-            }
-            println!();
         }
+        println!("{}", self.get_cli_header())
     }
 
     pub fn save_logs(&self) {
